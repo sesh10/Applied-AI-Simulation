@@ -3,9 +3,12 @@
 # libraries
 import os
 import numpy as np
+import gym
+from gym import wrappers
+import pybullet_envs
 
 # hyper parameters
-class Hp():
+class Hyperparam():
     
     def __init__(self):
         self.num_steps = 1000
@@ -15,14 +18,14 @@ class Hp():
         self.num_best_dir = 16
         self.noise = 0.03   
         self.seed = 1
-        self.env_name = ''
+        self.env_name = "HalfCheetahBulletEnv-v0"
         
         assert self.num_best_dir <= self.num_direction
 
 
 # Normailze states
 
-class Normalize():
+class Normalizer():
     def __init__(self, num_inputs):
         self.n = np.zeros(num_inputs)
         self.mean = np.zeros(num_inputs)
@@ -46,12 +49,12 @@ class Normalize():
 
 class Policy():
     def __init__(self, input_size, output_size):
-        self.theta = np.zeros({output_size, input_size})
+        self.theta = np.zeros((output_size, input_size))
         
     def evaluate(self, input, delta = None, direction = None):
         if direction is None:
             return self.theta.dot(input)
-        elif direction == 'positive':
+        elif direction == "positive":
             return (self.theta + hp.noise*delta).dot(input)
         else:
             return (self.theta - hp.noise*delta).dot(input)
@@ -64,7 +67,7 @@ class Policy():
         for pos_reward, neg_reward, d in rollout:
             step += (pos_reward - neg_reward) * d
             
-        self.theta += ( hp.learning_rate / hp.num_best_dir * std_dev_r) * step
+        self.theta += (( hp.learning_rate )/ (hp.num_best_dir * std_dev_r)) * step
         
 
 # exploring the ai(policy) on one specific direction
@@ -85,21 +88,64 @@ def explore(env, normalizer, policy, direction = None, delta = None):
         num_action_plays += 1
         
     return reward_sum
+
+
+# AI Training
+
+def train(env, policy, normalizer, hp):
+    for step in range(hp.num_steps):
+        deltas = policy.sample_deltas()
+        pos_rewards = [0] * hp.num_direction
+        neg_rewards = [0] * hp.num_direction
         
+        # getting +ve rewards
+        for i in range(hp.num_direction):
+            pos_rewards[i] = explore(env, normalizer, policy, direction="positive", delta=deltas[i])
+            
+        # getting -ve rewards
+        for i in range(hp.num_direction):
+            neg_rewards[i] = explore(env, normalizer, policy, direction="negative", delta=deltas[i])
+            
+        # Calculate standard deviation of rewards obtained
+        all_rewards = np.array(pos_rewards + neg_rewards)
+        std_dev_r = all_rewards.std()
         
+        # Sorting rollouts and select best direction
+        scores = {i: max(r_pos, r_neg) for i, (r_pos, r_neg) in enumerate(zip(pos_rewards, neg_rewards))}
+        order = sorted(scores.keys(), key = lambda x: scores[x], reverse = True)[:hp.num_best_dir]
+        rollout = [(pos_rewards[i], neg_rewards[i], deltas[i]) for i in order]
         
+        # Updating policy values
+        policy.update(rollout, std_dev_r)
         
+        # Final reward display
+        eval_reward = explore(env, normalizer, policy)
+        print('Step: ', step, 'Reward: ', eval_reward)
         
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
+# Result folder
+
+def mkdir(base, name):
+    path = os.path.join(base, name)
+    if not os.path.exists(path):
+        os.makedirs(path)
+    return path
+work_dir = mkdir('exp', 'brs')
+monitor_dir = mkdir(work_dir, 'monitor')
+
+
+# Object creation with main code
+
+hp = Hyperparam()
+np.random.seed(hp.seed)
+env = gym.make(hp.env_name)
+env = wrappers.Monitor(env, monitor_dir, force = True)
+num_inputs = env.observation_space.shape[0]
+num_outputs = env.action_space.shape[0]
+policy = Policy(num_inputs, num_outputs)
+normalizer = Normalizer(num_inputs)
+train(env, policy, normalizer, hp)
+
+
+
+
